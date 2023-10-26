@@ -1,0 +1,1002 @@
+ /*     
+      *********** IAQ Code Version 2.1 ************
+      Version Date : 09/01/2021
+* Enabling Watch dog timer. wdt_reset() in every function except delay funation 
+ * Added one more function fot the wifi setup RGB color change on Power ON.
+ * Added Data_SMS_1 string to void RGB_INT function.
+ * Added one more function for Triggering values as void data_push.But not used.
+ * Added VTPin to the Remote function.  
+ 
+ ----NOTE------
+ * Make is code as Golden Sample.
+ * Mention the changes which is made in the code. 
+ 
+ 
+ */
+#include <avr/wdt.h>
+#include <DFRobot_ENS160.h> 
+#include <Wire.h>
+#include <TuyaWifi.h>
+#include "SparkFunCCS811.h"
+#include "ens210.h"
+#include "ACS712.h"
+//#include "RTClib.h"
+
+TuyaWifi my_device;
+ENS210 ens210;
+//RTC_DS1307 rtc; 
+DFRobot_ENS160_I2C ENS160(&Wire,0x52); /*I2CAddr*/ 
+
+/* Current LED status */
+unsigned char on_state ;
+unsigned char UV_state ;
+unsigned char RD_state ;
+unsigned char SWL_state ;
+unsigned char rgb_state ;
+
+unsigned char mode_value ;
+unsigned char fan_value ;
+
+int KEY1_state=0,KEY2_state=0,KEY3_state=0,KEY4_state=0,KEY5_state=0;
+int KEY6_state=0,KEY7_state=0,KEY8_state=0,KEY9_state=0,KEY10_state=0;
+
+float temperature = 0;
+float humidity = 0;
+int tuya_temperature = 0;
+int tuya_humidity = 0;
+long tvoc_value = 0;
+int ec02_value = 0;
+int pm_value = 0;
+int Air_value = 0;
+int Bright_value;
+int count=0;
+uint8_t AQI;
+uint16_t TVOC; 
+uint16_t ECO2;
+uint8_t Status;
+/*PMTotal*/
+static int frame[7]; 
+int PMTotal, PM2=0;
+static int dataStart, VoutH, VoutL, VrefH, VrefL, checksum, dataEnd;
+static int frame2[7];
+/*flag*/
+String Data_SMS_1; 
+String Data_SMS_2,RGB_status;
+int RGB=0,SYS=0,MODE=0,FAN_PWM=0,COOL=0,WARM=0,UV=0,PLASMA=0,FILTER=0;
+int UV_PRB=0,FLTR_PRB=0,PLA_PRB=0,STUS_LIGHT=0,STUS_LIGHT_1=1;
+
+#define redPin      13    // 13 /PB7/26  /ON BRD RGB RED               RGB RED
+#define bluePin     11    // 11/PB5/24   /ON BRD RGB BLUE            RGB BLUE
+#define greenPin    12    // 12/PB6/25   /ON BRD RGB GREEN       RGB GREEN
+
+
+#define DRV_redPin   5   // 5/PE3/5     /PWM RGB RED LIGHT     Tuya PWM
+#define DRV_bluePin  45   // 7/PH4/16    /READ LIGHT1                 FREE
+#define DRV_greenPin 44  // 6/PH3/15    /READ LIGHT2                               BLDC FAN
+
+#define RD_LMP1   46   // 46/PL3/38   /PWM READ LIGHT1     FREE
+#define RD_LMP2   7   // 45/PL4/39   /PWM READ LIGHT2         RDL1
+#define RD_LMP3   6  // 44/PL5/40   /PWM FAN                         RDL2
+
+#define CUR_SEN1 A0 // RELAY_1 F/B 
+#define CUR_SEN2 A1 // RELAY_2 F/B
+#define CUR_SEN3 A2 // RELAY_3 F/B
+
+#define RLY1Pin 62  // RELAY_1
+#define RLY2Pin 63  // RELAY_2
+#define RLY3Pin 64  // RELAY_3
+#define RLY4Pin 65  // RELAY_4
+#define RLY5Pin 22  // RELAY_5
+
+#define BUZPin 4  // buzzer
+
+#define LED1Pin 8   // LED_1 O/P
+#define LED2Pin 9   // LED_2 O/P
+
+#define SW1Pin 28   // SW_1 INPUT 
+#define SW2Pin 29   // SW_2 INPUT 
+
+#define R_SW1Pin 66  // REMOTE SW1
+#define R_SW2Pin 67  // REMOTE SW2
+#define R_SW3Pin 68  // REMOTE SW1
+#define R_SW4Pin 69  // REMOTE SW1
+ #define VTPin 27   // Valid Transmit
+/* Data point define */
+#define DPID_ONOFF 1
+#define DPID_MODE 3
+#define DPID_FANSPEED 4
+#define DPID_READLYT 8
+#define DPID_UV 9
+#define DPID_INTEMP 12
+#define DPID_INHUM 13
+#define DPID_TVOC 14
+#define DPID_eCO 15
+#define DPID_PM 20
+#define DPID_Air 21
+#define DPID_Dimming 101
+#define DPID_Bright 102
+#define DPID_Colour 103
+#define DPID_Switch 104
+#define DPID_RGB 105
+/* Stores all DPs and their types. PS: array[][0]:dpid, array[][1]:dp type. 
+ dp type(TuyaDefs.h) : DP_TYPE_RAW, DP_TYPE_BOOL, DP_TYPE_VALUE, DP_TYPE_STRING, DP_TYPE_ENUM, DP_TYPE_BITMAP
+*/
+unsigned char dp_array[][2] =
+{
+    /*  DPID     |  DP type  */
+    {DPID_ONOFF,DP_TYPE_BOOL},  
+    {DPID_MODE, DP_TYPE_ENUM},
+    {DPID_FANSPEED,DP_TYPE_ENUM}, 
+    {DPID_READLYT, DP_TYPE_BOOL}, 
+    {DPID_UV,DP_TYPE_BOOL},
+    {DPID_INTEMP,DP_TYPE_VALUE},
+    {DPID_INHUM, DP_TYPE_VALUE},  
+    {DPID_TVOC,DP_TYPE_VALUE},
+    {DPID_eCO, DP_TYPE_VALUE},
+    {DPID_PM, DP_TYPE_VALUE},  
+    {DPID_Air,DP_TYPE_ENUM},
+    {DPID_Dimming,DP_TYPE_RAW},
+    {DPID_Bright, DP_TYPE_VALUE},  
+    {DPID_Colour, DP_TYPE_STRING},
+    {DPID_Switch, DP_TYPE_BOOL},
+    {DPID_RGB,  DP_TYPE_VALUE}, 
+};
+
+unsigned char pid[] = {"ytaokwyfgssube5e"};
+unsigned char mcu_ver[] = {"1.0.0"};
+/* last time */
+unsigned long last_time = 0;
+
+void RGB_LED (int colour);
+void RELAY (int relay_no);
+void dp_update_all(void);
+void IAQ_READ (void);
+void pm_read (void);
+void REMOTE_refresh (void);
+void remote (int Key_1,int Key_2,int Key_3,int Key_4);
+void wifi_setup (void);
+int getSerial() 
+{
+  while (!Serial2.available()) {}
+  return Serial2.read();
+}
+void setup() 
+{
+  Serial.begin(9600);
+  Serial1.begin(115200);
+  Serial2.begin(2400);   //dust
+  Serial3.begin(115200); 
+  //watchdog timer with 2 Seconds time out
+ wdt_enable(WDTO_8S);
+  Wire.begin();
+  ens210.begin(); 
+  //  Serial1.println("ENS160 Begin ok!");
+  // Init the sensor   
+    while( NO_ERR != ENS160.begin() )
+    {
+    //Serial1.println("Communication with device failed, please check connection");
+    delay(3000);
+    } 
+//  Serial1.println("ENS160 Begin ok!");
+  ENS160.setPWRMode(ENS160_STANDARD_MODE); 
+   
+  //Serial1.println("Entering Wifi Setup"); ; 
+ wifi_setup(); 
+  //Serial1.println("Wifi Setup Over");
+
+  // on bord rgb led
+  pinMode(redPin, OUTPUT);
+  pinMode(bluePin, OUTPUT);
+  pinMode(greenPin, OUTPUT);
+  // rgb led drive
+  pinMode(DRV_redPin, OUTPUT);  // cool light1
+  pinMode(DRV_bluePin, OUTPUT); // warm light1
+  pinMode(DRV_greenPin, OUTPUT);// cool light2
+  // read lamp drive
+  pinMode(RD_LMP1, OUTPUT); // warm light2
+  pinMode(RD_LMP2, OUTPUT);
+  pinMode(RD_LMP3, OUTPUT); //pwm fan control
+  //relay pin driver
+  pinMode(RLY1Pin, OUTPUT); // UV
+  pinMode(RLY2Pin, OUTPUT); // plasma
+  pinMode(RLY3Pin, OUTPUT); // 
+  pinMode(RLY4Pin, OUTPUT); // 12 volt filter
+  pinMode(RLY5Pin, OUTPUT); //
+  pinMode(BUZPin, OUTPUT);  // buzzer
+  // test led
+  pinMode(LED1Pin, OUTPUT);
+  pinMode(LED2Pin, OUTPUT);
+  //test switch
+  pinMode(SW1Pin, INPUT);
+  pinMode(SW2Pin, INPUT);
+  //remote
+  pinMode(R_SW1Pin, INPUT);
+  pinMode(R_SW2Pin, INPUT);
+  pinMode(R_SW3Pin, INPUT);
+  pinMode(R_SW4Pin, INPUT);
+ pinMode(VTPin, INPUT);
+  //Enter the PID and MCU software version
+  my_device.init(pid, mcu_ver);
+  //incoming all DPs and their types array, DP numbers
+  my_device.set_dp_cmd_total(dp_array, 16);
+  //register DP download processing callback function
+  my_device.dp_process_func_register(dp_process);
+  //register upload all DP callback function
+  my_device.dp_update_all_func_register(dp_update_all);
+
+  last_time = millis();
+}
+
+void loop() 
+{wdt_reset();
+  //Serial1.println("Void Loop Begins");   //Serial3.println("DB5");
+  Serial.flush();
+  my_device.uart_service(); 
+  //Serial1.println("Mydevice.uart done");
+ // Serial1.println("Inside Void Loop");wdt_reset();
+  //Enter the connection network mode when Pin7 is pressed.
+        if (digitalRead(SW2Pin) == LOW) 
+        {
+          delay(80);
+          if (digitalRead(SW2Pin) == LOW) 
+          {
+            my_device.mcu_set_wifi_mode(SMART_CONFIG);
+          }
+        }
+
+  /* LED blinks when network is being connected */
+      if ((my_device.mcu_get_wifi_work_state()!= WIFI_LOW_POWER) && (my_device.mcu_get_wifi_work_state()!= WIFI_CONN_CLOUD) && (my_device.mcu_get_wifi_work_state() != WIFI_SATE_UNKNOW))
+      {
+        if (millis()- last_time >= 500) {
+          last_time = millis();
+    
+          if (on_state == LOW) {
+            on_state = HIGH;
+          } else {
+            on_state = LOW;
+          }
+         //digitalWrite(LED_BUILTIN, on_state);
+        }
+      }
+
+  /*key test*/
+  
+       if (digitalRead(SW1Pin) == LOW || digitalRead(SW2Pin) == LOW ) 
+        {
+          delay(80);
+          if (digitalRead(SW1Pin) == LOW) 
+          {
+            SYS=!SYS;
+            if ((my_device.mcu_get_wifi_work_state() == WIFI_CONNECTED) || (my_device.mcu_get_wifi_work_state() == WIFI_CONN_CLOUD)) 
+            { my_device.mcu_dp_update( DPID_ONOFF, SYS, 1);}
+            delay(80);
+          }
+        }
+
+  /* report the temperature and humidity */wdt_reset();
+  REMOTE_refresh ();wdt_reset();
+  pm_read ();  wdt_reset();
+  IAQ_READ ();
+ wdt_reset();
+          if(SYS==1) //on
+          { digitalWrite(LED1Pin, HIGH);
+        
+           if(MODE==1) // auto
+           {  digitalWrite(LED2Pin, HIGH);                
+              output(); RGB_LED(RGB);
+              count++;
+              delay(100); 
+              if(count == 100 )
+              {//count++;
+                if ((my_device.mcu_get_wifi_work_state() == WIFI_CONNECTED) || (my_device.mcu_get_wifi_work_state() == WIFI_CONN_CLOUD)) 
+                  {
+                    my_device.mcu_dp_update(DPID_INTEMP, tuya_temperature, 1);
+                    my_device.mcu_dp_update(DPID_INHUM, tuya_humidity, 1);
+                    my_device.mcu_dp_update(DPID_TVOC,TVOC , 1);
+                    my_device.mcu_dp_update(DPID_eCO, ECO2 , 1);   
+                    my_device.mcu_dp_update(DPID_PM, PM2, 1);    
+                  } 
+                delay(100);
+              }
+       
+            if( count==100)
+             {
+                 STUS_LIGHT=1; IAQ_READ ();pm_read (); output(); 
+                 Data_SMS_1 = "[Device 2] TEMP:"+String(temperature)+" C, HUM:"+String(humidity)+" %RH, TVOC:"+String(TVOC)+" ppb, eCO2 :"+String(ECO2)+" ppm, AQI :"+String(AQI)+ "PMTotal :"+String(PM2)+" ug/m3 ";            
+                 Serial3.println(Data_SMS_1); delay(10); 
+                 Serial1.println(Data_SMS_1);
+                 delay(100);
+                 count=0;
+              } 
+         
+           } 
+            
+           if(MODE==0) // manual
+           {  digitalWrite(LED2Pin, LOW); 
+              pm_read();
+              IAQ_READ(); RGB_LED(RGB);
+              delay(100); 
+              count++;
+            if(count == 100 )
+              {//count++; 
+              if ((my_device.mcu_get_wifi_work_state() == WIFI_CONNECTED) || (my_device.mcu_get_wifi_work_state() == WIFI_CONN_CLOUD)) 
+                  {
+                    my_device.mcu_dp_update(DPID_INTEMP, tuya_temperature, 1);
+                    my_device.mcu_dp_update(DPID_INHUM, tuya_humidity, 1);
+                    my_device.mcu_dp_update(DPID_TVOC,TVOC , 1);
+                    my_device.mcu_dp_update(DPID_eCO, ECO2 , 1);   
+                    my_device.mcu_dp_update(DPID_PM, PM2, 1);  
+                  }  
+                delay(100);
+              }
+            
+                if( count==100)
+                 {
+                   STUS_LIGHT=1; IAQ_READ ();pm_read (); 
+                   Data_SMS_1 = "[Device 2] TEMP:"+String(temperature)+" C, HUM:"+String(humidity)+" %RH, TVOC:"+String(TVOC)+" ppb, eCO2 :"+String(ECO2)+" ppm, AQI :"+String(AQI)+ "PMTotal :"+String(PM2)+" ug/m3 ";            
+                   Serial3.println(Data_SMS_1); delay(10); 
+                  Serial1.println(Data_SMS_1);
+                   delay(100);
+                   count=0;                
+                  }
+        
+               }   
+          }
+         if(SYS==0) //off
+         {
+           RGB_LED(0); 
+           analogWrite(RD_LMP3, 0 );
+           RELAY(0);
+           analogWrite( DRV_greenPin, 0 ); // led off
+           analogWrite( DRV_bluePin, 0 );
+           digitalWrite(LED2Pin, LOW);
+           digitalWrite(LED1Pin, LOW);
+           delay(100);
+         }
+   //  Serial1.println("End of Void Loop");
+
+}
+unsigned char dp_process(unsigned char dpid,const unsigned char value[], unsigned short length)
+{
+    // Serial1.println("Inside Tuya Calibration");
+  switch(dpid) {
+    case DPID_ONOFF:
+            SYS = my_device.mcu_get_dp_download_data(dpid, value, length); /* Get the value of the down DP command */
+               if(SYS==0)
+               { digitalWrite(LED1Pin, LOW); delay(200);}  
+                else
+               { digitalWrite(LED1Pin, HIGH); delay(200);} 
+       
+            //Status changes should be reported.
+            my_device.mcu_dp_update( DPID_ONOFF, SYS, length);
+    break;
+
+   case DPID_Switch:
+          SWL_state = my_device.mcu_get_dp_download_data(dpid, value, length); /* Get the value of the down DP command */
+          if (SWL_state)
+          {
+            //Turn on
+           RGB_LED(6);
+          } else 
+          {
+            //Turn off
+            RGB_LED(0);
+          }
+          //Status changes should be reported.
+          my_device.mcu_dp_update(DPID_Switch, SWL_state, length);
+    break;
+
+    case DPID_UV:
+         UV_state = my_device.mcu_get_dp_download_data(dpid, value, length); /* Get the value of the down DP command */
+          if (UV_state==1 && MODE==0) {
+          //Turn on
+          RELAY (1);
+          RGB_LED(5);
+          }
+          else 
+          {
+          //Turn off
+          RELAY (6);UV_state=0;
+         RGB_LED(0);
+        }
+        wdt_reset();
+        //Status changes should be reported.
+        my_device.mcu_dp_update(DPID_UV,UV_state, length);
+    break;
+    
+
+   case DPID_READLYT:
+          RD_state = my_device.mcu_get_dp_download_data(dpid, value, length); /* Get the value of the down DP command */
+          if (RD_state) {
+            //Turn on
+           RGB_LED(4);
+          } else {
+            //Turn off
+           RGB_LED(0);
+          }
+          //Status changes should be reported.
+          my_device.mcu_dp_update(DPID_READLYT, RD_state, length);
+    break;
+ 
+    case DPID_MODE:
+           // DebugSerial.println("Enum type:");
+           MODE= my_device.mcu_get_dp_download_data(dpid, value, length);
+          // MODE= mode_value ;
+            if(MODE==0 && SYS==1 )
+              {digitalWrite(LED2Pin, LOW);  delay(300); 
+               RGB_LED(5); delay(100);RGB_LED(0); delay(100);RGB_LED(5); delay(100);RGB_LED(0); delay(100);RGB_LED(5);delay(100);RGB_LED(0);
+              } // manual
+            else
+              {digitalWrite(LED2Pin, HIGH); delay(300);  mode_0(); } // auto 
+              my_device.mcu_dp_update(DPID_MODE, MODE, length);
+    break;
+ 
+    case DPID_FANSPEED:
+           // DebugSerial.println("Enum type:");
+            fan_value = my_device.mcu_get_dp_download_data(dpid, value, length);
+            //RGB_LED(fan_value); 
+           if(SYS==1)
+           {          
+              if(MODE==0 &&  fan_value==0)
+                {analogWrite(RD_LMP3, 0);}
+              if(MODE==0 &&  fan_value==1)
+                {analogWrite(RD_LMP3, 20);}
+              if(MODE==0 &&  fan_value==2)
+                {analogWrite(RD_LMP3, 60);}
+              if(MODE==0 &&  fan_value==3)
+                {analogWrite(RD_LMP3, 100);}  
+           }wdt_reset();
+            my_device.mcu_dp_update(DPID_FANSPEED,fan_value, length);
+    break; 
+     
+    case DPID_Bright:
+           // DebugSerial.println("Enum type:");
+            Bright_value = my_device.mcu_get_dp_download_data(dpid, value, length);
+             RGB_LED(Bright_value);
+            my_device.mcu_dp_update(DPID_Bright,Bright_value, length);
+    break; 
+    
+    case DPID_RGB:
+         rgb_state = my_device.mcu_get_dp_download_data(dpid, value, length); /* Get the value of the down DP command */
+        //Status changes should be reported.
+         my_device.mcu_dp_update(DPID_RGB, rgb_state , length);
+    break; 
+         
+    default:break;
+  }
+  
+  return TY_SUCCESS;
+ //  Serial1.println("End of Tuya Calib");
+
+}
+
+void dp_update_all(void)
+{  /* bool_type*/wdt_reset();
+//  Serial1.println("dp_update_all");
+  my_device.mcu_dp_update(DPID_ONOFF, SYS, 1);
+  my_device.mcu_dp_update(DPID_READLYT, RD_state, 1);
+  my_device.mcu_dp_update(DPID_UV,UV_state, 1);
+  my_device.mcu_dp_update(DPID_Switch, SWL_state, 1);
+  /*Enum_type*/ wdt_reset();
+  my_device.mcu_dp_update(DPID_MODE, mode_value, 1); 
+  my_device.mcu_dp_update(DPID_FANSPEED, fan_value, 1); //DPID_Bright 
+  my_device.mcu_dp_update(DPID_Bright,Bright_value, 1);
+  my_device.mcu_dp_update(DPID_RGB,rgb_state, 1);  
+   // Serial1.println("void dp_update_all Loop Ends");
+ wdt_reset();
+}
+
+void RGB_LED (int colour)
+{  // Serial1.println("RGB Status");//Serial3.println("DB23");
+  switch(colour)
+  {
+        case 1 :analogWrite( redPin, 255 ); //red
+                //RGB_status ="Red";
+                analogWrite( bluePin, 0 );
+                analogWrite( greenPin,0 );
+                break;
+        case 2 :analogWrite( redPin, 255 ); //rose
+                //RGB_status ="Rose";
+                analogWrite( bluePin, 128 );
+                analogWrite( greenPin,0 );
+                break;
+        case 3 :analogWrite( redPin, 255 ); //magenta
+                //RGB_status ="Magenta";
+                analogWrite( bluePin,255 );
+                analogWrite( greenPin,0 );
+                break;
+        case 4 :analogWrite( redPin, 128 ); //violet
+                //RGB_status ="Violet";
+                analogWrite( bluePin,255 );
+                analogWrite( greenPin,0 );
+                break;
+        case 5 :analogWrite( redPin,  0 ); //blue
+                //RGB_status ="Blue";
+                analogWrite( bluePin, 255 );
+                analogWrite( greenPin,0 );
+                break;
+        case 6 :analogWrite( redPin,  0 ); //Azure
+                //RGB_status ="Azure";
+                analogWrite( bluePin, 255 );
+                analogWrite( greenPin,128 );
+                break;
+        case 7 :analogWrite( redPin, 0 ); //cyan
+                //RGB_status ="Cyan";
+                analogWrite( bluePin, 255 );
+                analogWrite( greenPin,255 );
+                break;
+        case 8 :analogWrite( redPin, 0 ); //spring green
+                //RGB_status ="Spring green";
+                analogWrite( bluePin, 128 );
+                analogWrite( greenPin,255 );
+                break;
+        case 9 :analogWrite( redPin, 0 ); //green
+                //RGB_status ="Green";
+                analogWrite( bluePin, 0 );
+                analogWrite( greenPin,255 );
+                break;
+        case 10:analogWrite( redPin, 128 ); //chartreuse
+                //RGB_status ="Chartreuse";
+                analogWrite( bluePin, 0 );
+                analogWrite( greenPin,255 );
+                break;
+        case 11:analogWrite( redPin, 255 ); //yellow
+                //RGB_status ="Yellow";
+                analogWrite( bluePin, 0 );
+                analogWrite( greenPin,255 );
+                break;
+        case 12:analogWrite( redPin, 255 ); //orange
+                //RGB_status ="Orange";
+                analogWrite( bluePin, 0 );
+                analogWrite( greenPin,128 );
+                break;
+        case 13:analogWrite( redPin, 0 ); 
+                //RGB_status ="Cyan 25%";
+                analogWrite( bluePin, 60 );
+                analogWrite( greenPin,60 );
+                break;
+        case 14:analogWrite( redPin, 0 ); 
+                //RGB_status ="Cyan 50%";
+                analogWrite( bluePin, 120 );
+                analogWrite( greenPin,120 );
+                break;
+        case 15:analogWrite( redPin, 0 ); 
+                //RGB_status ="Cyan 25%";
+                analogWrite( bluePin,180);
+                analogWrite( greenPin,180 );
+                break;
+        default://RGB_status ="Off";
+                analogWrite( redPin, 0 ); // led off
+                analogWrite( bluePin, 0 );
+                analogWrite( greenPin,0 );        
+  }
+     //Serial1.println("End of RGB Status");//Serial3.println("DB24");
+}
+
+void IAQ_READ (void)
+{   
+  //Serial1.println("IAQ Function Begin");//Serial3.println("DB19");
+  int t_data, t_status, h_data, h_status;
+  delay(10); /// Serial1.println("IAQ data Calib");
+    wdt_reset();
+    ens210.measure(&t_data, &t_status, &h_data, &h_status );
+    temperature = ens210.toCelsius(t_data,10)/10.0;
+   // Serial1.print("TEMP:");
+  //  Serial1.println(temperature);    wdt_reset();
+    humidity = ens210.toPercentageH(h_data,1);
+  //  Serial1.print("HUMIDITY :");
+   // Serial1.println(humidity);    wdt_reset();
+    tuya_temperature = temperature;
+    tuya_humidity = humidity;
+    ENS160.setTempAndHum(humidity,temperature);
+   // Serial1.print("Set Environmental data");
+   // Serial1.println(humidity,temperature);
+    wdt_reset();
+     Status = ENS160.getENS160Status();
+     AQI = ENS160.getAQI();
+     TVOC = ENS160.getTVOC();
+     ECO2 = ENS160.getECO2();
+    // Serial1.print("Received algorithm Results :");
+         wdt_reset();
+     //Serial1.print(AQI);
+     return AQI,TVOC,ECO2;
+   //  Serial1.println("End of IAQ Function");wdt_reset();
+}
+
+void pm_read (void)
+{  
+   //Serial1.println("PM Function Begin");//Serial3.println("DB17");
+   Serial2.flush();  wdt_reset();  
+   if ( getSerial() != 0xff )
+        return;
+          //Serial1.println("got ff from PM Sensor and going for frame read"); //Serial3.println("DB7"); 
+    // Read in next frame.
+       wdt_reset();
+      for(int i = 0; i < 7; i++) 
+        {frame[i] = getSerial();} 
+    // Assign values.
+        dataStart = frame[0];
+        VoutH = frame[1];
+        VoutL = frame[2];
+        VrefH = frame[3];
+        VrefL = frame[4];
+        checksum = frame[5];
+        dataEnd = frame[6];
+        wdt_reset();
+       // Serial1.println("Validating Start and End characters"); //Serial3.println("DB8"); 
+    // Check the start and end of frame.
+    if ( dataStart != 0xaa || dataEnd != 0xff )  
+      return;
+      //Serial1.println("Validating Checksum"); 
+      wdt_reset();//Serial3.println("DB9");
+    // Verify the checksum.
+    unsigned int testSum = VoutH + VoutL + VrefH + VrefL;
+    if ( checksum != (testSum & 0xff) )
+      return;
+      wdt_reset();
+       //Serial1.println("Dust Data received"); //Serial3.println("DB10"); 
+
+   ////// end //////
+  float Vout = (VoutH * 256 + VoutL) / 1024.0 * 5.0;
+  float a = 100.0 / 0.35;  
+  float PMTotal = a * Vout;
+  PM2 = PMTotal;
+  return PM2;
+  wdt_reset();
+//  Serial1.println( PM2);
+  //Serial1.println("End of PM Function"); //Serial3.println("DB18");
+}
+
+void RELAY (int relay_no)
+{    //Serial1.println("Relay Function Begin");//Serial3.println("DB21");
+  switch (relay_no)
+  {
+    case 1:digitalWrite(RLY1Pin, HIGH);
+           break;
+    case 2:digitalWrite(RLY2Pin, HIGH);
+           break;
+    case 3:digitalWrite(RLY3Pin, HIGH);
+           break;
+    case 4:digitalWrite(RLY4Pin, HIGH);
+           break; 
+    case 5:digitalWrite(RLY5Pin, HIGH);
+           break; 
+    case 6:digitalWrite(RLY1Pin, LOW);
+           break;
+    case 7:digitalWrite(RLY2Pin, LOW);
+           break;
+    case 8:digitalWrite(RLY3Pin, LOW);
+           break;
+    case 9:digitalWrite(RLY4Pin, LOW);
+           break; 
+    case 10:digitalWrite(RLY5Pin,LOW);
+           break;      
+    default:digitalWrite(RLY1Pin, LOW);
+            digitalWrite(RLY2Pin, LOW);
+            digitalWrite(RLY3Pin, LOW);
+            digitalWrite(RLY4Pin, LOW);
+            digitalWrite(RLY5Pin, LOW);
+           break;                                 
+  }
+     // Serial1.println("End of Relay Function");
+     
+} 
+
+void RGB_INT (int i)
+{ //Serial1.println("void RGB_INT Begins");
+ Serial3.println(Data_SMS_1); delay(10); 
+  if ((my_device.mcu_get_wifi_work_state() == WIFI_CONNECTED) || (my_device.mcu_get_wifi_work_state() == WIFI_CONN_CLOUD)) 
+  {
+    my_device.mcu_dp_update(DPID_INTEMP, tuya_temperature, 1);
+    my_device.mcu_dp_update(DPID_INHUM, tuya_humidity, 1);
+    my_device.mcu_dp_update(DPID_TVOC, ENS160.getTVOC(), 1);
+    my_device.mcu_dp_update(DPID_eCO, ENS160.getECO2(), 1);   
+    my_device.mcu_dp_update(DPID_PM, PM2, 1);    
+    my_device.mcu_dp_update(DPID_Air, Air_value, 1); 
+  }
+  for(int t = 0; t < 3; t++) 
+  { RGB_LED(i);  delay(500); RGB_LED(0);delay(500);}  Serial1.println("Void RGB_INT Ends");
+}
+void wifi_setup (void)
+   {  
+    //  Serial1.println("Inside Wifi Setup"); //Serial3.println("DB32");
+    Serial3.print("+++");wdt_reset(); cyan_light_2s();
+        Serial3.print("+++"); wdt_reset(); cyan_light_2s();
+     Serial3.print("+++"); wdt_reset(); cyan_light_2s();
+    Serial3.print("AT+FACTORY\r"); wdt_reset();cyan_light_2s();
+
+     Serial3.print("AT+FACTORY\r"); wdt_reset();cyan_light_2s();
+
+    //Serial3.print("+++"); RGB_LED(3); delay(3000);
+    Serial3.print("AT+CIPSTOP=1\r "); wdt_reset();cyan_light_2s();
+
+    Serial3.print("AT+WJAP=Fidesiaq,98745643,\r"); wdt_reset();cyan_light_2s();
+              // SSID &PSWRD
+      Serial3.print("AT+WJAP=Fidesiaq,98745643,\r");  wdt_reset();cyan_light_2s();
+             // SSID &PSWRD
+    
+     Serial3.print("AT+CIPSTOP=1\r "); wdt_reset();cyan_light_2s();
+
+    Serial3.print("AT+CIPSTART=1,tcp_client,13.126.2.129,4444\r"); wdt_reset();cyan_light_2s();
+  //TCP: IP
+Serial3.print("AT+CIPSTART=1,tcp_client,13.126.2.129,4444\r"); wdt_reset();cyan_light_2s();
+ //TCP: IP
+    Serial3.print("AT+CIPSENDRAW\r");  wdt_reset();cyan_light_2s();
+
+     Serial3.print("AT+CIPSENDRAW\r");  wdt_reset();cyan_light_2s();
+
+  // Serial1.println("Wifi Setup Ends"); //Serial3.println("DB33");
+
+   }
+void mode_0 (void)
+   { RGB_LED(9); delay(100);RGB_LED(0); delay(100);RGB_LED(9); delay(100);RGB_LED(0); delay(100);RGB_LED(9);delay(100);RGB_LED(0); 
+   }
+void output (void)
+{ // Serial1.println("Void Output Function");
+   pm_read();wdt_reset();
+   IAQ_READ();wdt_reset();
+  // data_push();
+     
+   if((AQI==1 ||AQI==2 )&& 79 > PM2  )
+    {
+            if(MODE==1)
+            { RELAY(0); analogWrite(RD_LMP3, 0 );            
+            if(STUS_LIGHT==1 || STUS_LIGHT_1==2 || STUS_LIGHT_1==3)
+            { Air_value =2 ; RGB_INT (9);  STUS_LIGHT=0; 
+              STUS_LIGHT_1=1; 
+            }
+            }
+      
+    }
+  else if((AQI==3 ||AQI==4 )||(199 > PM2 && PM2 > 80))
+    {
+      //RGB_LED(12);  // ORANGE
+      
+        if(MODE==1)
+           {RELAY(1); delay(2); RELAY(2); delay(2); RELAY(3); analogWrite(RD_LMP3, 50 );} 
+        if(STUS_LIGHT==1|| STUS_LIGHT_1==1 || STUS_LIGHT_1==3  )
+            { Air_value =3 ; RGB_INT (12); 
+              STUS_LIGHT=0;
+              STUS_LIGHT_1=2;
+            }
+    }
+  else if(AQI==5 || PM2> 200 )
+    { 
+         if(MODE==1)
+           {RELAY(1); delay(2); RELAY(2); delay(2); RELAY(3);analogWrite(RD_LMP3, 100 );}
+         if(STUS_LIGHT==1 || STUS_LIGHT_1==1 || STUS_LIGHT_1==2 )
+            { Air_value =4 ; RGB_INT (1); 
+              STUS_LIGHT=0;
+              STUS_LIGHT_1=3;
+            }
+    } 
+
+        //Serial1.println("Void Output Function End");//wdt_reset();
+}
+    
+
+void REMOTE_refresh (void)
+{  //Serial1.println("Remote Refresh Begins");
+  if(digitalRead(VTPin)==HIGH){
+   if(digitalRead(R_SW1Pin)==LOW||digitalRead(R_SW2Pin)==LOW||digitalRead(R_SW3Pin)==LOW||digitalRead(R_SW4Pin)==LOW)  
+    {delay(90); 
+      if(digitalRead(R_SW1Pin)==LOW||digitalRead(R_SW2Pin)==LOW||digitalRead(R_SW3Pin)==LOW||digitalRead(R_SW4Pin)==LOW)    
+         { 
+          Serial1.print(digitalRead(R_SW1Pin));Serial1.print(digitalRead(R_SW2Pin));Serial1.print(digitalRead(R_SW3Pin));Serial1.print(digitalRead(R_SW4Pin));Serial1 .println();
+          remote(digitalRead(R_SW1Pin),digitalRead(R_SW2Pin),digitalRead(R_SW3Pin),digitalRead(R_SW4Pin));
+         }
+    }  
+         buzzer_on();
+  }
+  else
+  {
+    return;
+  }
+   //Serial1.println("Remote Refresh Function Ends");
+}
+void remote (int Key_1,int Key_2,int Key_3,int Key_4)  // 66,67,68,69
+{    Serial1.println("Remote Function");
+  /* RGB=0,SYS=0,MODE=0,FAN_PWM=0,COOL=0,WARM=0,UV=0,PLASMA=0,FILTER=0 */
+   
+  if(Key_1== 1 && Key_2== 1 && Key_3== 0 && Key_4== 1) // sw1 [1,1,0,1] , on / off , SYS
+  {
+     Serial1.println("sw1");
+    SYS=!SYS;
+    //on_state=SYS;
+    if ((my_device.mcu_get_wifi_work_state() == WIFI_CONNECTED) || (my_device.mcu_get_wifi_work_state() == WIFI_CONN_CLOUD)) 
+     {my_device.mcu_dp_update( DPID_ONOFF, SYS, 1); }
+  }
+  if(Key_1== 1 && Key_2== 0 && Key_3== 1 && Key_4== 1) // sw2 [1,0,1,1] mode , MODE 
+  {
+     Serial1.println("sw2");
+      MODE=!MODE;
+      if(MODE==0 && SYS==1 )
+        {digitalWrite(LED2Pin, LOW);  delay(300); 
+         RGB_LED(5); delay(100);RGB_LED(0); delay(100);RGB_LED(5); delay(100);RGB_LED(0); delay(100);RGB_LED(5);delay(100);RGB_LED(0);
+        } // manual
+        else
+        {digitalWrite(LED2Pin, HIGH); delay(300);  mode_0(); } // auto 
+      if ((my_device.mcu_get_wifi_work_state() == WIFI_CONNECTED) || (my_device.mcu_get_wifi_work_state() == WIFI_CONN_CLOUD))   
+        {my_device.mcu_dp_update(DPID_MODE, MODE,1);}
+      delay(80);   
+  }
+  if(Key_1== 0 && Key_2== 1 && Key_3== 1 && Key_4== 1) // sw3 [0,1,1,1] fan pwm +, FAN_PWM
+  {
+    Serial1.println("sw3");
+    FAN_PWM=FAN_PWM+25; 
+    if(FAN_PWM>=255)
+    {FAN_PWM=250;} 
+    if(SYS==1 && MODE==0)
+    { analogWrite(RD_LMP3, FAN_PWM );delay(300);}
+    if(SYS==1 && MODE==1)
+    {mode_0();}
+  }
+  if(Key_1== 1 && Key_2== 0 && Key_3== 1 && Key_4== 0) // sw4 [1,0,1,0] cool light control, COOL
+  {  
+    Serial1.println("sw4");
+    COOL=COOL+25; 
+    if(COOL>=255)
+    {COOL=0;} 
+    if(SYS==1 )
+    { analogWrite( DRV_greenPin, COOL );delay(100);}    
+  }
+ if(Key_1== 1 && Key_2== 1 && Key_3== 0 && Key_4== 0) //sw5 [1,1,0,0] warm light control, WARM
+  {
+    Serial1.println("sw5");
+    WARM=WARM+25; 
+    if(WARM>=255)
+    {WARM=0;} 
+    if(SYS==1 )
+    {  analogWrite( DRV_bluePin, WARM );delay(100);} 
+  }
+  if(Key_1== 0 && Key_2== 0 && Key_3== 1 && Key_4== 1) //sw6 [0,0,1,1] fan pwm -
+  {
+    Serial1.println("sw6");
+    FAN_PWM=FAN_PWM - 25; 
+    if(FAN_PWM<=1)
+    {FAN_PWM=0;} 
+    
+    if(SYS==1 && MODE==0)
+    { analogWrite(RD_LMP3, FAN_PWM );delay(300);}wdt_reset();
+    if(SYS==1 && MODE==1)
+    {mode_0();}        
+  }
+  if(Key_1== 0 && Key_2== 1 && Key_3== 0 && Key_4== 1) //sw7 [0,1,0,1] UV on/ off
+  {
+       Serial1.println("sw7");
+       UV=!UV; 
+      if(SYS==1)
+      {        
+         if( MODE==0 && UV==1)
+         { RELAY (1);delay(80); 
+         if ((my_device.mcu_get_wifi_work_state() == WIFI_CONNECTED) || (my_device.mcu_get_wifi_work_state() == WIFI_CONN_CLOUD)) 
+            {my_device.mcu_dp_update(DPID_UV,UV,1 ); }
+         }wdt_reset();
+         if( MODE==0 && UV==0)
+         { RELAY (6);delay(80);
+          if ((my_device.mcu_get_wifi_work_state() == WIFI_CONNECTED) || (my_device.mcu_get_wifi_work_state() == WIFI_CONN_CLOUD)) 
+          { my_device.mcu_dp_update(DPID_UV,UV,1 );}  
+         }   
+         if(MODE==1)
+         {mode_0();} 
+      }                
+  }
+ if(Key_1== 0 && Key_2== 1 && Key_3== 1 && Key_4== 0) //sw8 [0,1,1,0] plasma on/off
+  {
+        Serial1.println("sw8");
+        PLASMA=!PLASMA; 
+        if(SYS==1)
+        {        
+         if(MODE==0 && PLASMA==1)
+          {RELAY (2);delay(80);}
+         if(MODE==0 && PLASMA==0)
+          {RELAY (7);delay(80);}
+         if(MODE==1)
+          {mode_0();}  
+        }    
+  }
+  if(Key_1== 1 && Key_2== 0 && Key_3== 0 && Key_4== 1) //sw9 [1,0,0,1] filter on/off
+  {
+        Serial1.println("sw9");
+        FILTER=!FILTER; 
+        if(SYS==1)
+        {
+         if(MODE==0 && FILTER==1) 
+          {RELAY (4);delay(80);}
+         if( MODE==0 && FILTER==0)
+          {RELAY (9);delay(80);}       
+         if( MODE==1)
+          {mode_0();}   
+        }          
+  }
+ if(Key_1== 1 && Key_2== 1 && Key_3== 1 && Key_4== 0) //sw10 [1,1,1,0] rgb control,RGB
+  {
+       Serial1.println("sw10");
+       RGB++; 
+       if(RGB>=13)
+       {RGB=0;}  
+       if(SYS==1)
+       {RGB_LED(RGB); delay(80); }
+  } 
+
+}
+void buzzer_on (void)
+{
+  digitalWrite(BUZPin, HIGH);delay(25); digitalWrite(BUZPin, LOW); delay(25);
+}
+void cyan_light_2s(void)
+{
+  for(int i=20;i<200;i++)
+  {
+    analogWrite( redPin, 0 ); 
+      //RGB_status ="Cyan 25%";
+      analogWrite( bluePin,i);
+      analogWrite( greenPin,i );
+      delay(10);
+  }
+  
+   for(int i=200;i>15;i--)
+  {
+    analogWrite( redPin, 0 ); 
+      //RGB_status ="Cyan 25%";
+      analogWrite( bluePin,i);
+      analogWrite( greenPin,i );
+      delay(10);
+  }
+
+}
+/*void RED_RGB(void)
+{
+ for(int i=20;i<200;i++)
+  {
+    analogWrite( redPin,  i ); 
+   
+      delay(10);
+  }
+  
+   for(int i=200;i>15;i--)
+  {
+    analogWrite( redPin,   i ); 
+   
+  }
+}*/
+void data_push(void)
+{
+   
+    
+  if((AQI==1 ||AQI==2 )&& 39 > PM2  )
+    {
+            if(MODE==1)
+            { RELAY(0); analogWrite(RD_LMP3, 0 );            
+            if(STUS_LIGHT==1 || STUS_LIGHT_1==2 || STUS_LIGHT_1==3)
+            { Air_value =2 ; RGB_INT (9);  STUS_LIGHT=0; 
+              STUS_LIGHT_1=1; 
+            }
+            }
+      
+    }
+   else if((AQI==3 ||AQI==4 )||(76 > PM2 && PM2 > 40))
+    {
+      //RGB_LED(12);  // ORANGE
+      
+        if(MODE==1)
+           {RELAY(1); delay(2); RELAY(2); delay(2); RELAY(3); analogWrite(RD_LMP3, 50 );} 
+        if(STUS_LIGHT==1|| STUS_LIGHT_1==1 || STUS_LIGHT_1==3  )
+            { Air_value =3 ; RGB_INT (12); 
+              STUS_LIGHT=0;
+              STUS_LIGHT_1=2;
+            }
+    }
+   else if(AQI==5 || PM2> 77  )
+    { 
+         if(MODE==1)
+           {RELAY(1); delay(2); RELAY(2); delay(2); RELAY(3);analogWrite(RD_LMP3, 100 );}
+         if(STUS_LIGHT==1 || STUS_LIGHT_1==1 || STUS_LIGHT_1==2 )
+            { Air_value =4 ; RGB_INT (1); 
+              STUS_LIGHT=0;
+              STUS_LIGHT_1=3;
+            }
+    } 
+
+  }
+  
